@@ -1,14 +1,16 @@
-use serde::{Deserialize, Serialize};
+mod ui;
+mod db;
+
 use termion::input::TermRead;
-use termion::raw::RawTerminal;
 use::termion::event::Key;
+use ui::draw_double_box;
+use ui::draw_row;
 use std::fs;
 use std::env;
 use termion::raw::IntoRawMode;
-use std::io::{Write, stdout, Stdout, stdin};
-
-const WIDTH: usize = 80;
-const HEIGHT: usize = 24;
+use std::io::{Write, stdout, stdin};
+use crate::ui::{WIDTH, HEIGHT, Buffer, Position, TextObject, clear_screen, draw_buffer, draw_options, draw_text_object};
+use crate::db::{Column, create_db, JsonData, load_data};
 
 const COLUMNS_AMOUNT: usize = 3;
 const COLUMN_WIDTH: usize = WIDTH/COLUMNS_AMOUNT;
@@ -16,74 +18,6 @@ const COLUMN_WIDTH: usize = WIDTH/COLUMNS_AMOUNT;
 enum Mode {
     Normal,
     Add
-}
-
-type Buffer = [[char; WIDTH]; HEIGHT];
-
-struct Position {
-    x: usize,
-    y: usize
-}
-
-struct TextObject {
-    text: String,
-    position: Position,
-    width: usize
-}
-
-#[derive(Serialize, Deserialize)]
-struct Task {
-    text: String,
-    position: usize
-}
-
-struct Column<'a> {
-    title: String,
-    tasks: &'a Vec<Task>
-}
-
-#[derive(Serialize, Deserialize)]
-struct JsonData {
-    todo: Vec<Task>,
-    doing: Vec<Task>,
-    done: Vec<Task>,
-}
-
-fn draw_buffer(buffer: Buffer, stdout: &mut RawTerminal<Stdout>) {
-    for line in buffer.iter() {
-        let mut output = String::from_iter(line);
-        output.push_str("\r\n");
-        write!(stdout, "{output}").unwrap();
-    }
-}
-
-fn draw_options(stdout: &mut RawTerminal<Stdout>) {
-    write!(stdout, "\r\n").unwrap();
-    write!(stdout, "Commands:\r\n").unwrap();
-    write!(stdout, "\r\n").unwrap();
-    write!(stdout, "    h/l -> Cycle through selected columns\r\n").unwrap();
-    write!(stdout, "    j/k -> Cycle through selected tasks\r\n").unwrap();
-    write!(stdout, "    a -> Add task to selected column\r\n").unwrap();
-    write!(stdout, "    H/L -> Move selected task to next column\r\n").unwrap();
-    write!(stdout, "    D -> Remove selected task\r\n").unwrap();
-    write!(stdout, "    Q -> Save and quit\r\n").unwrap();
-}
-
-fn clear_screen() {
-    print!("\x1B[2J\x1B[1;1H");
-}
-
-fn draw_text_object(buffer: &mut Buffer, text_object: TextObject) {
-    let mut line_index = text_object.position.y;
-    let mut column_index = 0;
-    for character in text_object.text.chars() {
-        buffer[line_index][text_object.position.x + column_index] = character;
-        column_index += 1;
-        if column_index >= text_object.width {
-            line_index += 1;
-            column_index = 0;
-        }
-    }
 }
 
 fn draw_column_title(buffer: &mut Buffer, column_index: usize, text: &String) {
@@ -110,45 +44,6 @@ fn draw_column(buffer: &mut Buffer, column_index: usize, column: &Column) {
     for task in column.tasks {
         draw_text_at_column(buffer, column_index, &task.text);
     }
-}
-
-fn draw_frame(buffer: &mut Buffer, selected_column: usize) {
-    // Corners
-    buffer[0][0] = match selected_column { 0 => '\u{250F}', _ => '\u{250C}'};
-    buffer[0][WIDTH-1] = match selected_column { 2 => '\u{2513}', _ => '\u{2510}'};
-    buffer[HEIGHT-1][0] = match selected_column { 0 => '\u{2517}', _ =>'\u{2514}'};
-    buffer[HEIGHT-1][WIDTH-1] = match selected_column { 2 => '\u{251B}', _ =>'\u{2518}'};
-
-    // Vertical
-    for i in 1..HEIGHT-1 {
-        buffer[i][0] = match selected_column { 0 => '\u{2503}', _ => '\u{2502}'};
-        buffer[i][WIDTH-1] = match selected_column { 2 => '\u{2503}', _ => '\u{2502}' };
-        buffer[i][WIDTH/3] = match selected_column { 2 => '\u{2502}', _ => '\u{2503}' };
-        buffer[i][2*WIDTH/3] = match selected_column { 0 => '\u{2502}', _ => '\u{2503}' };
-    }
-
-    // Horizontal
-    for i in 1..WIDTH-1 {
-        let in_selected = i > selected_column*COLUMN_WIDTH && i < selected_column*COLUMN_WIDTH + COLUMN_WIDTH;
-        let normal_char: char = match in_selected { false => '\u{2500}', true => '\u{2501}' };
-        let bottom_split: char = '\u{2534}';
-        let top_split: char = '\u{252C}';
-
-        if i == WIDTH/3 || i == 2*WIDTH/3 {
-            buffer[0][i] = top_split;
-            buffer[HEIGHT-1][i] = bottom_split;
-            continue;
-        }
-        buffer[0][i] = normal_char;
-        buffer[HEIGHT-1][i] = normal_char;
-    }
-}
-
-fn create_db() {
-    fs::create_dir_all("data").expect("Cannot create data dir");
-    let empty_data: JsonData = JsonData { todo: vec![], doing: vec![], done: vec![] };
-    let empty_data = serde_json::to_string(&empty_data).expect("Invalid json");
-    fs::write("data/data.json", empty_data).expect("Cannot write to data/data.json");
 }
 
 fn main() {
@@ -183,8 +78,7 @@ fn main() {
         draw_column(&mut buffer, i, &columns[i]);
     }
 
-    let data = fs::read_to_string("data/data.json").expect("Couldnt open file");
-    let data: JsonData = serde_json::from_str(data.as_str()).expect("Couldnt parse json");
+    let data = load_data();
 
     for i in 0..columns.len() {
         columns[i].tasks = match i {
@@ -202,7 +96,12 @@ fn main() {
     loop {
         let stdin = stdin();
         clear_screen();
-        draw_frame(&mut buffer, selected_column);
+        draw_row(&mut buffer, COLUMNS_AMOUNT);
+        if selected_column == 2 {
+            draw_double_box(&mut buffer, COLUMN_WIDTH + 1, HEIGHT-1, Position { x: selected_column*COLUMN_WIDTH, y: 0 });
+        } else {
+            draw_double_box(&mut buffer, COLUMN_WIDTH, HEIGHT-1, Position { x: selected_column*COLUMN_WIDTH, y: 0 });
+        }
         draw_buffer(buffer, &mut stdout);
         draw_options(&mut stdout);
         write!(stdout, "\r\n    Selected column: {}\r\n", match selected_column {
@@ -211,6 +110,7 @@ fn main() {
             2 => "DONE",
             _ => "Unknown column"
         }).unwrap();
+        stdout.flush().unwrap();
         for character in stdin.keys() {
             match mode {
                 Mode::Normal => match character.unwrap() {
