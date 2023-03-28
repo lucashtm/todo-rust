@@ -7,9 +7,16 @@ pub struct Task {
     pub position: usize
 }
 
-pub struct Column<'a> {
+pub struct Column {
     pub title: String,
-    pub tasks: &'a Vec<Task>
+    pub tasks: Vec<Task>
+}
+
+impl Column {
+    pub fn add_task(&mut self, text: String) {
+        let task = Task { text, position: 0 };
+        self.tasks.push(task);
+    }
 }
 
 #[derive(Serialize, Deserialize)]

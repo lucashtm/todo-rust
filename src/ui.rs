@@ -30,7 +30,8 @@ pub struct Position {
 pub struct TextObject {
     pub text: String,
     pub position: Position,
-    pub width: usize
+    pub width: usize,
+    pub height: Option<usize>
 }
 
 pub fn draw_buffer(buffer: Buffer, stdout: &mut RawTerminal<Stdout>) {
@@ -123,7 +124,7 @@ pub fn clear_screen() {
     print!("{}{}{}", clear::All, cursor::Hide, cursor::Goto(1,1));
 }
 
-pub fn draw_text_object(buffer: &mut Buffer, text_object: TextObject) {
+pub fn draw_text_object(buffer: &mut Buffer, mut text_object: &mut TextObject) {
     let mut line_index = text_object.position.y;
     let mut column_index = 0;
     for character in text_object.text.chars() {
@@ -134,4 +135,5 @@ pub fn draw_text_object(buffer: &mut Buffer, text_object: TextObject) {
             column_index = 0;
         }
     }
+    text_object.height = Some(line_index+1);
 }
